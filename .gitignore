@@ -1,8 +1,17 @@
-# IDEs
+# IDEs and Agent configurations
 .vscode/
 .idea/
 .cursor/
 .antigravity/
+.agent/
+.agents/
+.claude/
+.cline/
+.qwen/
+.gemini/
+skills/
+archestra/
+archestra.skill
 
 # Python
 __pycache__/
@@ -19,7 +28,5 @@ dist/
 .env.local
 
 # Project Specific
-.gemini/tmp/
 audit_logs/
 *.db
-*.skill
