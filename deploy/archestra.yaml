@@ -1,0 +1,62 @@
+# Archestra Deployment Manifest
+# Vyapaar MCP — Financial Governance Server
+# Reference: archestra/references/deployment.md
+
+version: "v1"
+
+server:
+  name: "vyapaar-mcp"
+  description: "Financial Governance MCP Server — Razorpay X + Google Safe Browsing"
+  transport:
+    type: "sse"
+    url: "http://localhost:8000/sse"
+  health_check:
+    endpoint: "/health"
+    interval: "30s"
+
+tools:
+  - name: "handle_razorpay_webhook"
+    description: "Ingest and process Razorpay X webhook events (payout.queued)"
+  - name: "check_vendor_reputation"
+    description: "Check a URL against Google Safe Browsing v4 threat lists"
+  - name: "get_agent_budget"
+    description: "Get current daily spend and remaining budget for an agent"
+  - name: "get_audit_log"
+    description: "Retrieve spending audit trail with filtering"
+  - name: "set_agent_policy"
+    description: "Create or update agent spending policies"
+  - name: "health_check"
+    description: "Check health of all dependent services"
+  - name: "poll_razorpay_payouts"
+    description: "Poll Razorpay API for queued payouts and run governance"
+  - name: "get_metrics"
+    description: "Get Prometheus-compatible governance metrics"
+
+# Secrets managed by Archestra Vault integration
+# Reference: archestra/references/secrets.md
+secrets:
+  - name: "VYAPAAR_RAZORPAY_KEY_ID"
+    source: "vault"
+  - name: "VYAPAAR_RAZORPAY_KEY_SECRET"
+    source: "vault"
+  - name: "VYAPAAR_RAZORPAY_WEBHOOK_SECRET"
+    source: "vault"
+  - name: "VYAPAAR_GOOGLE_SAFE_BROWSING_KEY"
+    source: "vault"
+  - name: "SLACK_BOT_TOKEN"
+    source: "vault"
+  - name: "SLACK_CHANNEL_ID"
+    source: "vault"
+
+# Sidecar resources
+resources:
+  redis:
+    image: "redis:7-alpine"
+    port: 6379
+  postgres:
+    image: "postgres:15-alpine"
+    port: 5432
+    env:
+      POSTGRES_DB: "vyapaar_db"
+      POSTGRES_USER: "vyapaar"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"

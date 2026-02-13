@@ -7,18 +7,17 @@ Amounts are always in paise (integer). ₹500 = 50000 paise.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ============================================================
 # Enums
 # ============================================================
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     """Governance decision for a payout."""
 
     APPROVED = "APPROVED"
@@ -26,7 +25,7 @@ class Decision(str, Enum):
     HELD = "HELD"
 
 
-class ReasonCode(str, Enum):
+class ReasonCode(StrEnum):
     """Machine-readable reason codes for governance decisions."""
 
     POLICY_OK = "POLICY_OK"
@@ -38,6 +37,8 @@ class ReasonCode(str, Enum):
     RISK_HIGH = "RISK_HIGH"
     DOMAIN_BLOCKED = "DOMAIN_BLOCKED"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    RATE_LIMITED = "RATE_LIMITED"
+    ANOMALY_DETECTED = "ANOMALY_DETECTED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 

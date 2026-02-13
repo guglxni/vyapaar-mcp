@@ -1,11 +1,12 @@
 [project]
 name = "vyapaar-mcp"
-version = "3.0.0"
+version = "0.0.0"
 description = "Agentic Financial Governance MCP Server — The CFO for the Agentic Economy"
 readme = "README.md"
 authors = [
     { name = "guglxni", email = "aaryanguglani.cs21@rvce.edu.in" }
 ]
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "mcp[cli]>=1.0.0",
@@ -15,8 +16,8 @@ dependencies = [
     "asyncpg>=0.29.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
-    "structlog>=24.1.0",
-    "uvicorn>=0.27.0",
+    "scikit-learn>=1.4.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

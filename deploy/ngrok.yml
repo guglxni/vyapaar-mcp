@@ -1,0 +1,7 @@
+authtoken: ${NGROK_AUTHTOKEN}
+tunnels:
+  vyapaar-mcp:
+    proto: http
+    addr: 8000
+    schemes:
+      - https

@@ -21,6 +21,7 @@ import httpx
 
 from vyapaar_mcp.db.redis_client import RedisClient
 from vyapaar_mcp.models import SafeBrowsingResponse
+from vyapaar_mcp.resilience import CircuitBreaker, CircuitOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ THREAT_TYPES = [
 ]
 
 CLIENT_ID = "vyapaar-mcp"
-CLIENT_VERSION = "3.0.0"
+CLIENT_VERSION = "1.0"
 
 
 class SafeBrowsingChecker:
@@ -44,11 +45,15 @@ class SafeBrowsingChecker:
         api_key: str,
         api_url: str = "https://safebrowsing.googleapis.com/v4/threatMatches:find",
         redis: RedisClient | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         self._api_key = api_key
         self._api_url = api_url
         self._redis = redis
         self._http = httpx.AsyncClient(timeout=10.0)
+        self._circuit = circuit_breaker or CircuitBreaker(
+            "safe-browsing", failure_threshold=5, recovery_timeout=30.0
+        )
 
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -88,7 +93,8 @@ class SafeBrowsingChecker:
         }
 
         try:
-            response = await self._http.post(
+            response = await self._circuit.call(
+                self._http.post,
                 self._api_url,
                 params={"key": self._api_key},
                 json=request_body,
@@ -123,7 +129,23 @@ class SafeBrowsingChecker:
             return SafeBrowsingResponse(
                 matches=[
                     {  # type: ignore[list-item]
-                        "threatType": "TIMEOUT",
+                        "threatType": "VYAPAAR_TIMEOUT",
+                        "platformType": "ANY_PLATFORM",
+                        "threatEntryType": "URL",
+                        "threat": {"url": url},
+                    }
+                ]
+            )
+
+        except CircuitOpenError:
+            logger.error(
+                "Safe Browsing circuit OPEN for URL: %s — defaulting to UNSAFE",
+                url,
+            )
+            return SafeBrowsingResponse(
+                matches=[
+                    {  # type: ignore[list-item]
+                        "threatType": "VYAPAAR_CIRCUIT_OPEN",
                         "platformType": "ANY_PLATFORM",
                         "threatEntryType": "URL",
                         "threat": {"url": url},
@@ -140,7 +162,7 @@ class SafeBrowsingChecker:
             return SafeBrowsingResponse(
                 matches=[
                     {  # type: ignore[list-item]
-                        "threatType": "API_ERROR",
+                        "threatType": "VYAPAAR_API_ERROR",
                         "platformType": "ANY_PLATFORM",
                         "threatEntryType": "URL",
                         "threat": {"url": url},
@@ -153,7 +175,7 @@ class SafeBrowsingChecker:
             return SafeBrowsingResponse(
                 matches=[
                     {  # type: ignore[list-item]
-                        "threatType": "INTERNAL_ERROR",
+                        "threatType": "VYAPAAR_INTERNAL_ERROR",
                         "platformType": "ANY_PLATFORM",
                         "threatEntryType": "URL",
                         "threat": {"url": url},

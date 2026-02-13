@@ -1,12 +1,11 @@
 """Vyapaar MCP — Agentic Financial Governance Server."""
 
-__version__ = "3.0.0"
+# Internal prototype identifier — not for public display.
+__version__ = "0.0.0-prototype"
 
 
 def main() -> None:
     """CLI entrypoint for the Vyapaar MCP server."""
-    import asyncio
+    from vyapaar_mcp.server import run_server_sync
 
-    from vyapaar_mcp.server import run_server
-
-    asyncio.run(run_server())
+    run_server_sync()

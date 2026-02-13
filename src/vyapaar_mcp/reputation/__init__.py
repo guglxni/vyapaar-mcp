@@ -1,1 +1,1 @@
-"""Reputation package — Google Safe Browsing integration."""
+"""Reputation package — Google Safe Browsing, GLEIF, and anomaly detection."""

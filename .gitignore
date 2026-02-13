@@ -1,32 +1,66 @@
-# IDEs and Agent configurations
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ============================================================
+# Environment & Secrets
+# ============================================================
+.env
+.env.local
+.env.*.local
+
+# ============================================================
+# IDE & Agent Configurations
+# ============================================================
 .vscode/
 .idea/
 .cursor/
-.antigravity/
 .agent/
 .agents/
 .claude/
 .cline/
 .qwen/
 .gemini/
+.antigravity/
 skills/
 archestra/
 archestra.skill
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-env/
-build/
-dist/
-*.egg-info/
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+Thumbs.db
 
-# Environment & Secrets
-.env
-.env.local
+# ============================================================
+# Project: Vendor & Build Artifacts
+# ============================================================
 
-# Project Specific
+# Vendor (cloned third-party repos — reference only)
+vendor/
+
+# FOSS reference repos (cloned for implementation reference)
+.reference/
+
+# Compiled binaries (built from vendor/razorpay-mcp-server)
+bin/
+
+# Generated artifacts
+repomix-output.xml
+
+# ============================================================
+# Project: Runtime Data
+# ============================================================
 audit_logs/
 *.db

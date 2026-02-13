@@ -1,9 +1,8 @@
 # Vyapaar MCP — Agentic Financial Governance Server
 
-> **Version:** 3.0.0  
 > **Codename:** "The CFO for the Agentic Economy"  
-> **Stack:** Python 3.12, UV, FastMCP, Razorpay X (Sandbox), Redis, Google Safe Browsing v4  
-> **Architecture:** Async Event-Driven (Webhook + SSE Transport)  
+> **Stack:** Python 3.12, UV, FastMCP, Go 1.25 (Sidecar), Razorpay X (Sandbox), Redis, Google Safe Browsing v4  
+> **Architecture:** Hybrid (Webhook + API Polling + Go Bridge)  
 > **Hackathon:** [2 Fast 2 MCP](https://www.wemakedevs.org/hackathons/2fast2mcp) — Archestra Track  
 > **Platform:** [Archestra](https://archestra.ai) — Enterprise MCP Orchestrator  
 
@@ -131,13 +130,23 @@ We're entering the era of autonomous AI agents executing real-world financial ta
 | Component | Role | Technology |
 |:---|:---|:---|
 | **The Brain** | AI Agent initiating payouts | OpenClaw / Custom Agent |
-| **The Bank** | Payment execution & webhooks | Razorpay X (Sandbox) |
+| **The Bank** | Payment execution & API | Razorpay X (Sandbox) |
+| **The Bridge** (New) | Native Razorpay API Integration | **Go MCP Sidecar** (subprocess) |
 | **The Guard** | Policy enforcement & governance | **Vyapaar MCP** (this project) |
 | **The Platform** | MCP orchestration, secrets, observability | Archestra |
 | **The Memory** | Atomic budget counters, idempotency keys | Redis |
 | **The Ledger** | Audit logs, agent policies | PostgreSQL |
 | **The Lookout** | Vendor URL reputation checking | Google Safe Browsing v4 |
 | **The Messenger** | Human-in-the-loop approvals | Slack MCP |
+
+### 3.4 Integration Models (Hybrid)
+
+Vyapaar now supports two modes of operation:
+
+1.  **Webhook Mode (Event-Driven):** Razorpay pushes `payout.queued` events to `handle_razorpay_webhook`. Requires public ingress (ngrok/tunnel).
+2.  **Polling Mode (Active Fetch):** Vyapaar actively polls Razorpay via the `Go Bridge` using `poll_razorpay_payouts`. No tunnel required.
+    *   **Architecture:** Python MCP → MCP/stdio → Go Binary → Razorpay API (`GET /v1/payouts`)
+    *   **Benefit:** Zero-config local development, no webhook signature issues, native Go SDK support.
 
 ---
 
@@ -267,10 +276,22 @@ We're entering the era of autonomous AI agents executing real-world financial ta
 ```
 **Output:** `{ "status": "ok", "policy": { ... } }`
 
-### 6.6 `health_check`
-**Type:** Tool (Ops)  
-**Description:** Returns the health status of all dependent services (Redis, PostgreSQL, Razorpay).  
-**Output:** `{ "redis": "ok|error", "postgres": "ok|error", "razorpay": "ok|error", "uptime_seconds": 3600 }`
+### 6.7 `poll_razorpay_payouts`
+**Type:** Tool (Ingress/Ops)
+**Description:** Manually triggers a poll of Razorpay's Payouts API to fetch queued transactions and run them through the governance engine. Useful for local dev or cron-based architectures where webhooks are not available.
+**Input Schema:**
+```json
+{
+  "account_number": "string (optional, defaults to env var)",
+  "count": "integer (optional, default 10)"
+}
+```
+**Output:** `{ "status": "success", "processed": 5, "decisions": [...] }`
+
+### 6.8 `razorpay_tools` (Sidecar)
+**Type:** Toolset (Proxy)
+**Description:** Vyapaar exposes 40+ native Razorpay tools via the embedded Go sidecar.
+**Examples:** `fetch_all_payments`, `create_payment_link`, `fetch_payout_with_id`.
 
 ---
 

@@ -1,6 +1,6 @@
-"""Redis client for atomic budget tracking and idempotency.
+"""Redis client for atomic budget tracking, rate limiting, and idempotency.
 
-CRITICAL: All budget operations MUST use atomic Redis commands (INCRBY).
+CRITICAL: All budget operations MUST use atomic Redis commands.
 Never use Read-Modify-Write patterns — they cause race conditions
 when multiple agents spend concurrently.
 """
@@ -58,6 +58,22 @@ class RedisClient:
     # Budget Operations (ATOMIC — per SPEC §4 constraint #2)
     # ================================================================
 
+    # Lua script: atomically check budget limit and increment if within bounds.
+    # Returns 1 (OK) or 0 (exceeded). Never leaves partial state.
+    _BUDGET_LUA = """
+local key = KEYS[1]
+local amount = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local current = tonumber(redis.call('GET', key) or '0')
+if current + amount > limit then
+    return 0
+end
+redis.call('INCRBY', key, amount)
+redis.call('EXPIRE', key, ttl)
+return 1
+"""
+
     def _budget_key(self, agent_id: str) -> str:
         """Generate daily budget key: vyapaar:budget:{agent_id}:{YYYYMMDD}."""
         today = date.today().strftime("%Y%m%d")
@@ -66,40 +82,132 @@ class RedisClient:
     async def check_budget_atomic(
         self, agent_id: str, amount: int, daily_limit: int
     ) -> bool:
-        """Atomically check and update budget.
+        """Atomically check and update budget using a Lua script.
 
-        Uses INCRBY (atomic) — never Read-Modify-Write.
-        If the new total exceeds the limit, rolls back with DECRBY.
+        The entire check-and-increment is a single atomic Redis op.
+        No rollback needed — if the limit would be exceeded, the
+        increment never happens.
 
         Returns True if budget allows the spend, False if limit exceeded.
         """
         key = self._budget_key(agent_id)
 
-        # Atomic increment
-        new_total = await self.client.incrby(key, amount)
+        result = await self.client.eval(
+            self._BUDGET_LUA,
+            1,       # number of KEYS
+            key,     # KEYS[1]
+            str(amount),       # ARGV[1]
+            str(daily_limit),  # ARGV[2]
+            str(90000),        # ARGV[3] — TTL 25 hours
+        )
 
-        if new_total > daily_limit:
-            # Rollback — budget exceeded
-            await self.client.decrby(key, amount)
+        if result == 1:
+            logger.info(
+                "Budget OK for %s: +%d paise (limit %d)",
+                agent_id, amount, daily_limit,
+            )
+            return True
+        else:
             logger.warning(
-                "Budget exceeded for %s: %d + %d > %d",
-                agent_id, new_total - amount, amount, daily_limit,
+                "Budget exceeded for %s: +%d would exceed limit %d",
+                agent_id, amount, daily_limit,
             )
             return False
-
-        # Set TTL to 25 hours (covers timezone edge cases)
-        await self.client.expire(key, 90000)
-        logger.info(
-            "Budget OK for %s: spent %d/%d paise",
-            agent_id, new_total, daily_limit,
-        )
-        return True
 
     async def get_daily_spend(self, agent_id: str) -> int:
         """Get current daily spend for an agent."""
         key = self._budget_key(agent_id)
         value = await self.client.get(key)
         return int(value) if value else 0
+
+    async def rollback_budget(self, agent_id: str, amount: int) -> None:
+        """Roll back a previously committed budget increment.
+
+        Used when a payout is rejected AFTER the budget check
+        passed (e.g., domain blocked, reputation fail).
+        """
+        key = self._budget_key(agent_id)
+        await self.client.decrby(key, amount)
+        logger.info("Budget rollback for %s: -%d paise", agent_id, amount)
+
+    # ================================================================
+    # Rate Limiting (sliding window per CODE_REVIEW §5.2)
+    # ================================================================
+
+    # Lua script: sliding window rate limiter.
+    # Removes expired entries, counts current, adds new if under limit.
+    # Returns: [allowed (0/1), current_count, ttl_remaining]
+    _RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local window = tonumber(ARGV[1])
+local max_requests = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local window_start = now - window
+
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, '-inf', window_start)
+
+-- Count current entries in window
+local current = redis.call('ZCARD', key)
+
+if current >= max_requests then
+    local ttl = redis.call('TTL', key)
+    return {0, current, ttl}
+end
+
+-- Add new entry with current timestamp as score
+redis.call('ZADD', key, now, now .. ':' .. math.random(1000000))
+redis.call('EXPIRE', key, window + 1)
+
+return {1, current + 1, window}
+"""
+
+    def _rate_limit_key(self, agent_id: str) -> str:
+        """Generate rate limit key: vyapaar:ratelimit:{agent_id}."""
+        return f"vyapaar:ratelimit:{agent_id}"
+
+    async def check_rate_limit(
+        self,
+        agent_id: str,
+        max_requests: int,
+        window_seconds: int = 60,
+    ) -> tuple[bool, int]:
+        """Check if an agent is within their rate limit.
+
+        Uses a Redis sorted set as a sliding window counter.
+        Fully atomic via Lua script.
+
+        Args:
+            agent_id: The agent to check.
+            max_requests: Maximum requests allowed in window.
+            window_seconds: Sliding window size in seconds.
+
+        Returns:
+            Tuple of (allowed: bool, current_count: int).
+        """
+        import time as _time
+
+        key = self._rate_limit_key(agent_id)
+        now = _time.time()
+
+        result = await self.client.eval(
+            self._RATE_LIMIT_LUA,
+            1,
+            key,
+            str(window_seconds),
+            str(max_requests),
+            str(now),
+        )
+
+        allowed = bool(result[0])
+        current_count = int(result[1])
+
+        if not allowed:
+            logger.warning(
+                "Rate limit exceeded for %s: %d/%d in %ds window",
+                agent_id, current_count, max_requests, window_seconds,
+            )
+        return allowed, current_count
 
     # ================================================================
     # Idempotency (per SPEC §4 constraint #3)
@@ -108,15 +216,15 @@ class RedisClient:
     async def check_idempotency(self, webhook_id: str) -> bool:
         """Check if webhook has already been processed.
 
-        Uses SETNX (atomic) — returns True if this is a NEW webhook.
+        Uses atomic SET with NX+EX — returns True if this is a NEW webhook.
         Returns False if already processed (idempotent skip).
+
+        The NX and EX flags are set in a single command to avoid a
+        race where the key is created but the TTL is never applied.
         """
         key = f"vyapaar:idempotent:{webhook_id}"
-        # SETNX returns True if key was set (new), False if exists
-        is_new = await self.client.setnx(key, "processed")
-        if is_new:
-            # Set 48h TTL for idempotency window
-            await self.client.expire(key, 172800)
+        # Atomic: set only if not exists, with 48h TTL
+        is_new = await self.client.set(key, "processed", nx=True, ex=172800)
         return bool(is_new)
 
     # ================================================================
