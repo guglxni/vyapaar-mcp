@@ -16,6 +16,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from vyapaar_mcp.audit.logger import log_decision
 from vyapaar_mcp.config import VyapaarConfig, load_config
@@ -41,6 +43,8 @@ from vyapaar_mcp.models import (
     HealthStatus,
     ReasonCode,
 )
+from vyapaar_mcp.llm import AzureOpenAIClient, SecurityLLMClient
+from vyapaar_mcp.llm.security_validator import ToolCallValidator
 from vyapaar_mcp.observability import metrics
 from vyapaar_mcp.reputation.safe_browsing import SafeBrowsingChecker
 from vyapaar_mcp.resilience import CircuitBreaker, CircuitOpenError
@@ -77,6 +81,9 @@ _cb_gleif: CircuitBreaker | None = None
 _gleif: GLEIFChecker | None = None
 _anomaly_scorer: TransactionAnomalyScorer | None = None
 _ntfy: NtfyNotifier | None = None
+_azure_llm: AzureOpenAIClient | None = None
+_security_llm: SecurityLLMClient | None = None
+_tool_validator: ToolCallValidator | None = None
 
 
 def _require(**services: Any) -> None:
@@ -117,7 +124,15 @@ mcp = FastMCP(
         "and audits every AI agent transaction via Razorpay X."
     ),
     lifespan=_lifespan,
+    sse_path="/sse",
+    message_path="/messages/",
 )
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> JSONResponse:
+    """HTTP Health Check for Archestra/Load Balancers."""
+    return JSONResponse({"status": "ok", "service": "vyapaar-mcp"})
 
 
 # ================================================================
@@ -131,7 +146,8 @@ async def _startup() -> None:
         _razorpay, _razorpay_bridge, _slack, _poller, \
         _governance, _poll_task, _start_time, \
         _cb_razorpay, _cb_safe_browsing, _cb_gleif, \
-        _gleif, _anomaly_scorer, _ntfy
+        _gleif, _anomaly_scorer, _ntfy, \
+        _azure_llm, _security_llm, _tool_validator
 
     _start_time = time.time()
     _config = load_config()
@@ -283,6 +299,50 @@ async def _startup() -> None:
             "ℹ️  ntfy not configured — set VYAPAAR_NTFY_TOPIC to enable push fallback"
         )
 
+    # Azure OpenAI Client (Microsoft AI Foundry)
+    _azure_llm = AzureOpenAIClient(_config)
+    try:
+        await _azure_llm.initialize()
+        if _azure_llm.is_configured:
+            logger.info(
+                "✅ Azure OpenAI initialized (deployment=%s, guardrails=%s)",
+                _config.azure_openai_deployment,
+                _config.azure_guardrails_enabled,
+            )
+        else:
+            logger.info(
+                "ℹ️  Azure OpenAI not configured — "
+                "set VYAPAAR_AZURE_OPENAI_ENDPOINT and VYAPAAR_AZURE_OPENAI_API_KEY"
+            )
+    except Exception as e:
+        logger.warning("⚠️  Azure OpenAI initialization skipped: %s", e)
+
+    # Security LLM / Dual LLM Quarantine Pattern
+    _tool_validator = ToolCallValidator(_config)
+    try:
+        await _tool_validator.initialize()
+        if _tool_validator.is_configured:
+            logger.info(
+                "✅ Dual LLM quarantine initialized (security_llm=%s, strict=%s)",
+                _config.security_llm_url,
+                _config.quarantine_strict,
+            )
+            logger.info(
+                "   Taint sources: %s",
+                _config.taint_sources.replace(",", ", ")
+            )
+            logger.info(
+                "   Dual-LLM tools: %s",
+                _config.dual_llm_tools.replace(",", ", ")
+            )
+        else:
+            logger.info(
+                "ℹ️  Dual LLM quarantine not configured — "
+                "set VYAPAAR_SECURITY_LLM_URL to enable"
+            )
+    except Exception as e:
+        logger.warning("⚠️  Dual LLM quarantine initialization skipped: %s", e)
+
     # Auto-polling (background task)
     if _config.auto_poll and _poller and _governance and _razorpay and _postgres:
         async def _auto_poll_callback(
@@ -346,6 +406,10 @@ async def _shutdown() -> None:
         await _gleif.close()
     if _safe_browsing:
         await _safe_browsing.close()
+    if _azure_llm:
+        await _azure_llm.close()
+    if _tool_validator:
+        await _tool_validator.close()
     if _redis:
         await _redis.disconnect()
     if _postgres:
@@ -775,6 +839,20 @@ async def handle_slack_action(
     elif action_id == "reject_payout":
         result = await _razorpay.reject_payout(payout_id)
         action_label = "rejected"
+
+        # --- Budget Rollback for HELD payouts ---
+        # If a payout was HELD, its budget was already deducted.
+        # When rejecting it, we MUST roll back the budget in Redis.
+        if _postgres and _redis:
+            audit_logs = await _postgres.get_audit_logs(payout_id=payout_id, limit=1)
+            if audit_logs:
+                log = audit_logs[0]
+                if log.decision == Decision.HELD:
+                    await _redis.rollback_budget(log.agent_id, log.amount)
+                    logger.info(
+                        "Budget rolled back via Slack action: agent=%s amount=%d",
+                        log.agent_id, log.amount,
+                    )
     else:
         return {"error": f"Unknown action: {action_id}"}
 
@@ -911,6 +989,176 @@ async def get_agent_risk_profile(
 
 
 # ================================================================
+# Azure AI Foundry & Security Tools
+# ================================================================
+
+
+@mcp.tool()
+async def check_context_taint() -> dict[str, Any]:
+    """Check if current execution context is tainted by untrusted data.
+    
+    The Dual LLM quarantine pattern tracks when tools that ingest external
+    data (webhooks, Safe Browsing, GLEIF) have been called. Once tainted,
+    certain high-privilege tools are blocked to prevent prompt injection.
+    
+    Returns:
+        Taint status, sources that caused tainting, and affected tools.
+    """
+    _require(tool_validator=_tool_validator)
+    
+    return {
+        "context_tainted": _tool_validator.is_tainted,
+        "taint_sources": _tool_validator._taint_sources,
+        "dual_llm_tools": _tool_validator._dual_llm_tools,
+        "security_llm_configured": _tool_validator.is_configured,
+    }
+
+
+@mcp.tool()
+async def validate_tool_call_security(
+    tool_name: str,
+    parameters: dict[str, Any],
+    agent_id: str = "default",
+) -> dict[str, Any]:
+    """Validate a tool call through the Dual LLM security layer.
+    
+    When context is tainted, this routes to the security LLM which validates
+    the operation WITHOUT access to conversation context (quarantine pattern).
+    
+    Args:
+        tool_name: Name of tool to call.
+        parameters: Parameters for the tool call.
+        agent_id: Agent requesting the operation.
+        
+    Returns:
+        Validation result with approve/deny decision and reasoning.
+    """
+    _require(
+        tool_validator=_tool_validator,
+        postgres=_postgres,
+    )
+    
+    # Get current governance policy for context
+    policy = await _postgres.get_agent_policy(agent_id)
+    governance_policy = {
+        "agent_id": agent_id,
+        "daily_limit": str(policy.daily_limit) if policy else None,
+        "per_txn_limit": str(policy.per_txn_limit) if policy else None,
+        "requires_approval_above": str(policy.require_approval_above) if policy else None,
+    }
+    
+    from vyapaar_mcp.llm.security_validator import ToolCallRequest
+    
+    result = await _tool_validator.validate(
+        tool_name=tool_name,
+        parameters=parameters,
+        agent_id=agent_id,
+        governance_policy=governance_policy,
+    )
+    
+    return {
+        "approved": result.approved,
+        "reason": result.reason,
+        "risk_score": result.risk_score,
+        "mitigation": result.mitigation,
+        "context_tainted": _tool_validator.is_tainted,
+    }
+
+
+@mcp.tool()
+async def azure_chat(
+    message: str,
+    system_prompt: str = "You are a helpful assistant.",
+    temperature: float = 0.7,
+    max_tokens: int = 1000,
+) -> dict[str, Any]:
+    """Send a chat completion request to Azure OpenAI (AI Foundry).
+    
+    Security note: This tool marks context as TAINTED because LLM responses
+    can contain injected content. Subsequent high-privilege tool calls
+    require Dual LLM validation or are blocked.
+    
+    Args:
+        message: User message to send.
+        system_prompt: System prompt/context for the LLM.
+        temperature: Sampling temperature (0-2, default 0.7).
+        max_tokens: Maximum tokens to generate.
+        
+    Returns:
+        LLM response text and token usage.
+    """
+    _require(azure_llm=_azure_llm, tool_validator=_tool_validator)
+    
+    if not _azure_llm.is_configured:
+        return {
+            "error": "Azure OpenAI not configured",
+            "config_required": [
+                "VYAPAAR_AZURE_OPENAI_ENDPOINT",
+                "VYAPAAR_AZURE_OPENAI_API_KEY",
+            ],
+        }
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+    
+    response, status = await _azure_llm.chat_completion(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    
+    if response is None:
+        return {
+            "error": status,
+            "hint": "Create deployment at https://ai.azure.com → Deployments → Create deployment",
+        }
+    
+    # Taint context: LLM responses are untrusted
+    _tool_validator.mark_taint("azure_chat")
+    
+    return {
+        "response": response,
+        "context_note": "Response may be tainted - subsequent critical tools require validation",
+    }
+
+
+@mcp.tool()
+async def get_archestra_status() -> dict[str, Any]:
+    """Get Archestra deterministic policy enforcement status.
+    
+    Returns current configuration for the security proxy layer that
+    enforces hard boundaries on tool access (vs probabilistic guardrails).
+    
+    Returns:
+        Archestra config, taint tracking status, and policy tiers.
+    """
+    _require(config=_config, tool_validator=_tool_validator)
+    
+    return {
+        "archestra_enabled": _config.archestra_enabled,
+        "archestra_url": _config.archestra_url,
+        "policy_set_id": _config.archestra_policy_set_id,
+        "security_llm": {
+            "url": _config.security_llm_url,
+            "model": _config.security_llm_model,
+            "configured": _tool_validator.is_configured if _tool_validator else False,
+        },
+        "dual_llm_config": {
+            "taint_sources": _config.taint_sources.split(",") if _config.taint_sources else [],
+            "dual_llm_tools": _config.dual_llm_tools.split(",") if _config.dual_llm_tools else [],
+            "quarantine_strict": _config.quarantine_strict,
+            "audit_logging": _config.quarantine_audit_log,
+        },
+        "azure_guardrails": {
+            "enabled": _config.azure_guardrails_enabled,
+            "severity": _config.azure_guardrails_severity,
+        },
+    }
+
+
+# ================================================================
 # Server Runner
 # ================================================================
 
@@ -924,8 +1172,52 @@ async def run_server() -> None:
 
 
 def run_server_sync() -> None:
-    """Synchronous entrypoint (calls mcp.run which handles its own loop)."""
-    mcp.run(transport="stdio")
+    """Synchronous entrypoint with custom SSE path handling."""
+    import os
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    from mcp.server.sse import SseServerTransport
+
+    transport_name = os.environ.get("VYAPAAR_TRANSPORT", "stdio")
+    
+    if transport_name == "sse":
+        host = os.environ.get("VYAPAAR_HOST", "0.0.0.0")
+        port = int(os.environ.get("VYAPAAR_PORT", "8000"))
+        
+        # Manually create the transport to use /sse for both
+        sse = SseServerTransport("/sse")
+        
+        async def sse_app_unified(request: Request):
+            scope, receive, send = request.scope, request.receive, request._send
+            if scope["method"] == "GET":
+                async with sse.connect_sse(scope, receive, send) as streams:
+                    await mcp._mcp_server.run(
+                        streams[0],
+                        streams[1],
+                        mcp._mcp_server.create_initialization_options()
+                    )
+                # connect_sse already sends the response, don't return another one
+                return None
+            elif scope["method"] == "POST":
+                await sse.handle_post_message(scope, receive, send)
+                return None
+            return Response("Method Not Allowed", status_code=405)
+
+        starlette_app = Starlette(
+            debug=True,
+            routes=[
+                Route("/sse", endpoint=sse_app_unified, methods=["GET", "POST"]),
+                Route("/health", endpoint=health_endpoint, methods=["GET"]),
+            ]
+        )
+        
+        # Add custom routes from mcp
+        starlette_app.routes.extend(mcp._custom_starlette_routes)
+        
+        uvicorn.run(starlette_app, host=host, port=port)
+    else:
+        mcp.run(transport=transport_name)
 
 
 # Allow direct execution

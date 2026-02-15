@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="profileGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6D28D9;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="55" fill="url(#profileGrad)"/>
+  <!-- User silhouette -->
+  <circle cx="60" cy="40" r="18" fill="white" opacity="0.9"/>
+  <path d="M35 85 Q35 60 60 60 Q85 60 85 85 L85 90 Q85 100 60 100 Q35 100 35 90 Z" fill="white" opacity="0.9"/>
+  <!-- Analytics lines -->
+  <line x1="30" y1="45" x2="45" y2="35" stroke="white" stroke-width="2" opacity="0.6"/>
+  <line x1="45" y1="35" x2="60" y2="45" stroke="white" stroke-width="2" opacity="0.7"/>
+  <line x1="60" y1="45" x2="75" y2="30" stroke="white" stroke-width="2" opacity="0.8"/>
+  <line x1="75" y1="30" x2="90" y2="40" stroke="white" stroke-width="2" opacity="0.9"/>
+  <!-- Chart bars -->
+  <rect x="35" y="75" width="8" height="15" rx="1" fill="white" opacity="0.6"/>
+  <rect x="47" y="68" width="8" height="22" rx="1" fill="white" opacity="0.7"/>
+  <rect x="59" y="72" width="8" height="18" rx="1" fill="white" opacity="0.8"/>
+  <rect x="71" y="65" width="8" height="25" rx="1" fill="white" opacity="0.9"/>
+</svg>

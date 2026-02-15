@@ -6,34 +6,206 @@ version: "v1"
 
 server:
   name: "vyapaar-mcp"
-  description: "Financial Governance MCP Server — Razorpay X + Google Safe Browsing"
+  description: "Agentic Financial Governance Server — Razorpay X + GLEIF + Safe Browsing + ML Anomaly Detection"
   transport:
     type: "sse"
-    url: "http://localhost:8000/sse"
+    url: "http://host.docker.internal:8000/sse"
   health_check:
     endpoint: "/health"
     interval: "30s"
 
+# Archestra MCP Gateway
+gateway:
+  agent_id: "30000000-0000-4000-8000-000000000001"
+  url: "http://localhost:9000/v1/mcp/30000000-0000-4000-8000-000000000001"
+  auth:
+    type: "bearer"
+    token: "${ARCHESTRA_TEAM_TOKEN}"
+
+# 12 Vyapaar MCP Tools — Foundry Trust Classification
 tools:
+  # ===========================================================================
+  # TIER 1: DENY when context tainted (deterministic hard block)
+  # These tools have financial side-effects. No LLM prompt can override deny.
+  # ===========================================================================
   - name: "handle_razorpay_webhook"
-    description: "Ingest and process Razorpay X webhook events (payout.queued)"
-  - name: "check_vendor_reputation"
-    description: "Check a URL against Google Safe Browsing v4 threat lists"
-  - name: "get_agent_budget"
-    description: "Get current daily spend and remaining budget for an agent"
-  - name: "get_audit_log"
-    description: "Retrieve spending audit trail with filtering"
+    description: "Process Razorpay webhook/polling payloads through governance pipeline"
+    foundry_tier: "deny_when_tainted"
+    trust_output: false  # Output taints context (external financial data)
+    foundry_rule: "no_untrusted_financial_ingress"
+    rationale: "Webhook payloads = indirect prompt injection vector. Deny prevents lethal trifecta."
+  - name: "handle_slack_action"
+    description: "Handle Slack interactive action callbacks for approval workflows"
+    foundry_tier: "deny_when_tainted"
+    foundry_rule: "no_tainted_approval_actions"
+    rationale: "Tainted context must never trigger approval workflows (task drift risk)."
   - name: "set_agent_policy"
-    description: "Create or update agent spending policies"
-  - name: "health_check"
-    description: "Check health of all dependent services"
+    description: "Create/update agent spending policies"
+    foundry_tier: "deny_when_tainted"
+    foundry_rule: "no_tainted_policy_changes"
+    rationale: "Attacker could inject instructions to raise spending limits."
+
+  # ===========================================================================
+  # TIER 2: Require Dual LLM validation when context tainted
+  # Lower risk than Tier 1, but external inputs need secondary validation.
+  # ===========================================================================
   - name: "poll_razorpay_payouts"
-    description: "Poll Razorpay API for queued payouts and run governance"
+    description: "Poll Razorpay X API for recent payout events and run governance"
+    foundry_tier: "dual_llm_when_tainted"
+    trust_output: false  # Output taints context (external data)
+    foundry_rule: "validate_tainted_polling"
+    rationale: "Read-only but results feed governance pipeline for further decisions."
+  - name: "score_transaction_risk"
+    description: "Score transaction anomaly risk using IsolationForest ML model"
+    foundry_tier: "dual_llm_when_tainted"
+    trust_output: false  # Output taints context (caller-provided inputs)
+    foundry_rule: "validate_tainted_risk_scoring"
+    rationale: "Uses caller-provided amount/vendor data — may originate from injection."
+
+  # ===========================================================================
+  # TIER 3: Untrusted output (taints context) but no invocation restriction
+  # Data ingestion tools — always allowed but output marks context as tainted.
+  # ===========================================================================
+  - name: "check_vendor_reputation"
+    description: "Check URL against Google Safe Browsing v4 threat lists"
+    foundry_tier: "taint_on_output"
+    trust_output: false  # External Google API results
+    rationale: "Safe Browsing responses come from external API — could contain injected content."
+  - name: "verify_vendor_entity"
+    description: "Verify vendor legal entity via GLEIF LEI database"
+    foundry_tier: "taint_on_output"
+    trust_output: false  # External GLEIF API results
+    rationale: "GLEIF data is external — entity descriptions could be injection vectors."
+
+  # ===========================================================================
+  # TIER 4: ALLOW always + trusted output (does not taint context)
+  # Read-only internal tools with no side effects. Always safe to call.
+  # ===========================================================================
+  - name: "get_agent_budget"
+    description: "Current daily spend and remaining budget for an agent"
+    foundry_tier: "allow_always"
+    trust_output: true  # Internal governance engine data
+    foundry_rule: "allow_readonly_governance"
+  - name: "get_audit_log"
+    description: "Query immutable audit trail of governance decisions"
+    foundry_tier: "allow_always"
+    trust_output: true  # Internal append-only audit trail
+    foundry_rule: "allow_readonly_governance"
+  - name: "get_agent_risk_profile"
+    description: "Comprehensive risk profile for an agent over time window"
+    foundry_tier: "allow_always"
+    trust_output: true  # Internal ML analysis on historical data
+    foundry_rule: "allow_readonly_governance"
+  - name: "health_check"
+    description: "Check health of all Vyapaar MCP subsystems"
+    foundry_tier: "allow_always"
+    trust_output: true  # Internal system status only
+    foundry_rule: "allow_readonly_observability"
   - name: "get_metrics"
-    description: "Get Prometheus-compatible governance metrics"
+    description: "Prometheus-compatible governance metrics and statistics"
+    foundry_tier: "allow_always"
+    trust_output: true  # Internal aggregated counters
+    foundry_rule: "allow_readonly_observability"
+
+# =============================================================================
+# Security: Microsoft Foundry Deterministic Access Controls
+# Reference: https://archestra.ai/docs/platform-foundry
+# =============================================================================
+security:
+  # ---------------------------------------------------------------------------
+  # Foundry Model: Deterministic > Probabilistic
+  #
+  # The Microsoft Foundry article demonstrates that probabilistic guardrails
+  # (LLM-based prompt injection detection, content filters) fail against
+  # crafted indirect prompt injections. Archestra enforces DETERMINISTIC
+  # policies at the proxy layer — no LLM prompt can override a DENY rule.
+  #
+  # Lethal Trifecta Defense:
+  #   1. Indirect Prompt Injection → Context tainting marks untrusted data
+  #   2. Sensitive Data Leakage    → DENY blocks exfiltration via tainted tools 
+  #   3. Task Drift                → DENY blocks unauthorized financial actions
+  # ---------------------------------------------------------------------------
+  foundry:
+    enabled: true
+    description: >
+      Archestra acts as a deterministic proxy enforcing hard access boundaries
+      on tool invocations. Unlike probabilistic guardrails (Azure AI Content
+      Safety, Prompt Shields), these policies cannot be bypassed by crafted
+      prompts. Every tool call is intercepted at the gateway and checked
+      against explicit ALLOW/DENY rules based on context trust level.
+    policy_tiers:
+      deny_when_tainted:
+        description: "Hard block — tool cannot be invoked when context is tainted"
+        tools: ["handle_razorpay_webhook", "handle_slack_action", "set_agent_policy"]
+        enforcement: "deterministic"
+        override: "none"  # No LLM, no prompt, no parameter can bypass
+      dual_llm_when_tainted:
+        description: "Secondary LLM validates tool call before execution"
+        tools: ["poll_razorpay_payouts", "score_transaction_risk"]
+        enforcement: "semi-deterministic"
+        override: "security_llm_approval_only"
+      taint_on_output:
+        description: "Tool output marks agent context as tainted"
+        tools: ["check_vendor_reputation", "verify_vendor_entity", "handle_razorpay_webhook", "poll_razorpay_payouts", "score_transaction_risk"]
+        enforcement: "automatic"
+      allow_always:
+        description: "Read-only internal tools — always allowed, output stays trusted"
+        tools: ["health_check", "get_metrics", "get_agent_budget", "get_audit_log", "get_agent_risk_profile"]
+        enforcement: "deterministic"
+    lethal_trifecta:
+      indirect_prompt_injection:
+        mitigation: "context_tainting"
+        description: "All external data sources (Razorpay webhooks, Safe Browsing, GLEIF) are marked untrusted. When an agent processes untrusted data, its context becomes tainted."
+      sensitive_data_leakage:
+        mitigation: "deny_when_tainted"
+        description: "Tainted agents cannot invoke tools that export data (Slack messages, policy changes). Hard DENY prevents exfiltration."
+      task_drift:
+        mitigation: "deny_when_tainted + dual_llm"
+        description: "Tainted agents cannot approve payouts or modify governance rules. Critical path tools are blocked; secondary path tools require dual LLM validation."
+
+  # Dual LLM Quarantine Pattern (Tier 2 enforcement)
+  dual_llm:
+    enabled: true
+    max_rounds: 5
+    description: >
+      Independent security LLM validates financial tool calls when context
+      is tainted but the operation is lower-risk (polling, risk scoring).
+      The security LLM has NO access to the tainted context — it only sees
+      the tool name, parameters, and the governance policy. This isolation
+      prevents the injection from propagating to the security validator.
+
+  # Dynamic Tools: Automatic Context Tainting
+  dynamic_tools:
+    consider_context_untrusted: true
+    description: >
+      Agent is configured with consider_context_untrusted=true. Archestra
+      auto-detects registered tools and enforces policies dynamically.
+      When a tool with a taint_context trusted data policy is invoked,
+      all subsequent tool calls are evaluated against invocation policies.
+    taint_sources:
+      - tool: "handle_razorpay_webhook"
+        reason: "Webhook payloads contain untrusted external data from Razorpay"
+      - tool: "poll_razorpay_payouts"
+        reason: "Razorpay polling results contain external financial data"
+      - tool: "check_vendor_reputation"
+        reason: "Safe Browsing results come from external Google API"
+      - tool: "verify_vendor_entity"
+        reason: "GLEIF data comes from external LEI API"
+      - tool: "score_transaction_risk"
+        reason: "Risk scoring uses caller-provided amount/vendor data"
+    trust_sources:
+      - tool: "health_check"
+        reason: "Internal system status — no external data"
+      - tool: "get_metrics"
+        reason: "Internal aggregated counters — no PII"
+      - tool: "get_agent_budget"
+        reason: "Internal governance engine — spend tracking"
+      - tool: "get_audit_log"
+        reason: "Internal append-only audit trail"
+      - tool: "get_agent_risk_profile"
+        reason: "Internal ML analysis on historical data"
 
 # Secrets managed by Archestra Vault integration
-# Reference: archestra/references/secrets.md
 secrets:
   - name: "VYAPAAR_RAZORPAY_KEY_ID"
     source: "vault"

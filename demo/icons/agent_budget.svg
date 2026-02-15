@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="budgetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D97706;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="55" fill="url(#budgetGrad)"/>
+  <!-- Coin stack -->
+  <ellipse cx="60" cy="50" rx="25" ry="8" fill="#FCD34D"/>
+  <ellipse cx="60" cy="62" rx="25" ry="8" fill="#FBBF24"/>
+  <ellipse cx="60" cy="74" rx="25" ry="8" fill="#F59E0B"/>
+  <!-- Dollar sign -->
+  <text x="60" y="68" text-anchor="middle" font-family="Arial" font-size="28" font-weight="bold" fill="#78350F">$</text>
+  <!-- Sparkles -->
+  <path d="M30 30 L32 25 L34 30 L32 28 Z" fill="white" opacity="0.8"/>
+  <path d="M90 35 L92 30 L94 35 L92 33 Z" fill="white" opacity="0.6"/>
+  <path d="M85 85 L87 80 L89 85 L87 83 Z" fill="white" opacity="0.7"/>
+</svg>

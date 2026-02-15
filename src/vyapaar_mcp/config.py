@@ -22,7 +22,6 @@ class VyapaarConfig(BaseSettings):
         env_prefix="VYAPAAR_",
         case_sensitive=False,
         env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
     )
 
@@ -143,6 +142,118 @@ class VyapaarConfig(BaseSettings):
     anomaly_risk_threshold: float = Field(
         default=0.75,
         description="Risk score threshold (0-1) above which transactions are flagged as anomalous",
+    )
+
+    # ============================================
+    # Microsoft Azure AI Foundry Configuration
+    # ============================================
+    # Azure AI Foundry is Microsoft's enterprise AI development platform.
+    # Archestra provides deterministic access policies as a proxy layer
+    # to protect against prompt injection attacks (lethal trifecta).
+
+    # --- Azure OpenAI / AI Foundry ---
+    azure_openai_endpoint: str = Field(
+        default="",
+        description="Azure OpenAI endpoint (e.g., https://<resource>.openai.azure.com/)",
+    )
+    azure_openai_api_key: str = Field(
+        default="",
+        description="Azure OpenAI API key from Azure Portal > Keys and Endpoint",
+    )
+    azure_openai_deployment: str = Field(
+        default="gpt-4o",
+        description="Azure OpenAI model deployment name",
+    )
+    azure_foundry_project_id: str = Field(
+        default="",
+        description="Azure AI Foundry Project ID for project-scoped resources",
+    )
+    azure_openai_api_version: str = Field(
+        default="2024-10-21",
+        description="Azure OpenAI API version",
+    )
+
+    # --- Archestra Security Proxy (Deterministic Controls) ---
+    # Archestra sits as a proxy between your agent and MCP servers/LLM
+    # to enforce deterministic access policies instead of probabilistic guardrails.
+    #
+    # NOTE: For self-hosted Archestra, no external API key is needed.
+    # The proxy runs locally and enforces policies via its own gateway.
+    # The ARCHESTRA_TEAM_TOKEN in deploy/archestra.yaml is for gateway auth
+    # (generated locally via: archestra token generate --team <team-id>)
+    archestra_enabled: bool = Field(
+        default=False,
+        description="Enable Archestra proxy layer for deterministic security controls",
+    )
+    archestra_url: str = Field(
+        default="http://localhost:9000",
+        description="Archestra URL for self-hosted instance (local proxy endpoint)",
+    )
+    archestra_policy_set_id: str = Field(
+        default="",
+        description="Archestra policy set ID defining allow/deny rules",
+    )
+
+    # --- Azure Foundry Guardrails (Probabilistic - Use with caution) ---
+    # Note: Azure's probabilistic guardrails can be bypassed.
+    # We recommend Archestra's deterministic controls for production.
+    azure_guardrails_enabled: bool = Field(
+        default=False,
+        description="Enable Azure Foundry guardrails (jailbreak, indirect prompt injection detection)",
+    )
+    azure_guardrails_severity: int = Field(
+        default=1,
+        description="Moderation severity threshold: 0=low, 1=medium, 2=high",
+    )
+
+    # ============================================
+    # Dual LLM Quarantine Pattern (Security Layer)
+    # ============================================
+    # Reference: https://archestra.ai/docs/platform-dual-llm
+    #
+    # The Dual LLM pattern defends against the "lethal trifecta":
+    # - Indirect prompt injection via untrusted tool outputs
+    # - Sensitive data leakage through compromised context
+    # - Task drift caused by malicious instructions embedded in data
+
+    # --- Context Tainting ---
+    taint_sources: str = Field(
+        default="handle_razorpay_webhook,poll_razorpay_payouts,check_vendor_reputation,verify_vendor_entity,score_transaction_risk",
+        description="Comma-separated list of tools that mark context as untrusted",
+    )
+
+    # --- Dual LLM Validation Tier ---
+    dual_llm_tools: str = Field(
+        default="poll_razorpay_payouts,score_transaction_risk",
+        description="Tools requiring security LLM validation when context is tainted",
+    )
+
+    # --- Security LLM Configuration ---
+    security_llm_url: str = Field(
+        default="http://localhost:9001/v1",
+        description="Endpoint for isolated security validation LLM (no context access)",
+    )
+    security_llm_key: str = Field(
+        default="",
+        description="API key for security LLM (if required by local deployment)",
+    )
+    security_llm_model: str = Field(
+        default="gpt-4o-mini",
+        description="Security LLM model (e.g., gpt-4o-mini for cost-effective validation)",
+    )
+    dual_llm_max_rounds: int = Field(
+        default=5,
+        description="Max validation rounds before forcing deny (prevents loops)",
+    )
+
+    # --- Quarantine Enforcement ---
+    quarantine_strict: bool = Field(
+        default=True,
+        description="Strict mode: if security LLM fails/unavailable, DENY the tool call",
+    )
+    quarantine_audit_log: bool = Field(
+        default=True,
+        description="Log all security LLM validation decisions for audit",
     )
 
 

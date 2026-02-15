@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="metricsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#EC4899;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#BE185D;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect x="15" y="15" width="90" height="90" rx="10" fill="url(#metricsGrad)"/>
+  <!-- Chart bars -->
+  <rect x="25" y="55" width="12" height="35" rx="2" fill="white" opacity="0.9"/>
+  <rect x="42" y="40" width="12" height="50" rx="2" fill="white" opacity="0.9"/>
+  <rect x="59" y="50" width="12" height="40" rx="2" fill="white" opacity="0.9"/>
+  <rect x="76" y="25" width="12" height="65" rx="2" fill="white" opacity="0.9"/>
+  <!-- Trend line -->
+  <polyline points="25,60 42,45 59,55 76,30" fill="none" stroke="#22D3EE" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="76" cy="30" r="4" fill="#22D3EE"/>
+  <!-- Axis -->
+  <line x1="20" y1="90" x2="100" y2="90" stroke="white" stroke-width="2" opacity="0.5"/>
+  <line x1="20" y1="20" x2="20" y2="90" stroke="white" stroke-width="2" opacity="0.5"/>
+</svg>

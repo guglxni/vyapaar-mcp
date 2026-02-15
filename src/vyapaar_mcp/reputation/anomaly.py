@@ -165,8 +165,8 @@ class TransactionAnomalyScorer:
 
         # Compute z-score feature using history
         amounts = [h["amount_log"] for h in history]
-        mean_amt = np.mean(amounts)
-        std_amt = np.std(amounts) if len(amounts) > 1 else 1.0
+        mean_amt = float(np.mean(amounts))
+        std_amt = float(np.std(amounts)) if len(amounts) > 1 else 1.0
         features["amount_zscore"] = (features["amount_log"] - mean_amt) / max(std_amt, 0.001)
 
         # Record transaction AFTER computing z-score so it includes the real value
@@ -251,7 +251,7 @@ class TransactionAnomalyScorer:
         std_amt: float,
     ) -> np.ndarray:
         """Build feature matrix from history, including z-score computation."""
-        rows = []
+        rows: list[list[float]] = []
         for h in history:
             zscore = (h["amount_log"] - mean_amt) / max(std_amt, 0.001)
             rows.append([
@@ -345,7 +345,7 @@ class TransactionAnomalyScorer:
         ts: datetime,
     ) -> None:
         """Record a transaction in Redis for future model training."""
-        if not self._redis:
+        if not self._redis or not self._redis._client:
             return
 
         key = f"anomaly:history:{agent_id}"
@@ -365,7 +365,7 @@ class TransactionAnomalyScorer:
 
     async def _get_history(self, agent_id: str) -> list[dict[str, float]]:
         """Retrieve transaction history from Redis."""
-        if not self._redis:
+        if not self._redis or not self._redis._client:
             return []
 
         key = f"anomaly:history:{agent_id}"

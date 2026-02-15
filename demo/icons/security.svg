@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="securityGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7C3AED;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#5B21B6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background shield -->
+  <path d="M60 10 L105 30 L105 65 Q105 100 60 110 Q15 100 15 65 L15 30 Z" fill="url(#securityGrad)"/>
+  <!-- Shield inner -->
+  <path d="M60 20 L90 35 L90 60 Q90 85 60 95 Q30 85 30 60 L30 35 Z" fill="white" opacity="0.15"/>
+  <!-- Lock body -->
+  <rect x="40" y="50" width="40" height="35" rx="5" fill="white"/>
+  <!-- Lock shackle -->
+  <path d="M45 50 L45 40 Q45 30 60 30 Q75 30 75 40 L75 50" fill="none" stroke="white" stroke-width="6"/>
+  <!-- Keyhole -->
+  <circle cx="60" cy="65" r="6" fill="url(#securityGrad)"/>
+  <rect x="57" y="65" width="6" height="12" rx="2" fill="url(#securityGrad)"/>
+</svg>

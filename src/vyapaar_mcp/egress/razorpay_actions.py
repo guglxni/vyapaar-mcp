@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from typing import Any
 
 import httpx
 import razorpay
 
 from vyapaar_mcp.resilience import CircuitBreaker
+from vyapaar_mcp.security import mask_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +71,19 @@ class RazorpayActions:
                 last_error = e
                 logger.warning(
                     "%s failed (attempt %d/%d): %s — retrying in %.1fs",
-                    operation, attempt, MAX_RETRIES, e, delay,
+                    operation, attempt, MAX_RETRIES, mask_secrets(str(e)), delay,
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * BACKOFF_MULTIPLIER, MAX_DELAY)
 
             except razorpay.errors.BadRequestError as e:
                 # 4xx — don't retry
-                logger.error("%s failed with client error: %s", operation, e)
+                logger.error("%s failed with client error: %s", operation, mask_secrets(str(e)))
                 raise
 
             except Exception as e:
                 last_error = e
-                logger.error("%s unexpected error: %s", operation, e)
+                logger.error("%s unexpected error: %s", operation, mask_secrets(str(e)))
                 if attempt == MAX_RETRIES:
                     raise
                 await asyncio.sleep(delay)

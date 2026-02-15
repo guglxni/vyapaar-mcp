@@ -4,6 +4,7 @@ CRITICAL SECURITY:
 - Every webhook MUST have its X-Razorpay-Signature verified via HMAC-SHA256.
 - Replayed webhooks are detected via Redis SETNX idempotency.
 - Invalid signatures return 401 immediately.
+- All payloads are validated for size and format before processing.
 """
 
 from __future__ import annotations
@@ -17,6 +18,17 @@ from typing import Any
 from vyapaar_mcp.models import RazorpayWebhookEvent
 
 logger = logging.getLogger(__name__)
+
+# Maximum webhook payload size: 1MB
+MAX_PAYLOAD_SIZE = 1024 * 1024
+
+
+class WebhookValidationError(Exception):
+    """Raised when webhook payload fails validation."""
+
+    def __init__(self, message: str, code: str = "VALIDATION_ERROR") -> None:
+        self.code = code
+        super().__init__(message)
 
 
 def verify_razorpay_signature(
@@ -87,3 +99,44 @@ def extract_webhook_id(event: RazorpayWebhookEvent) -> str:
     payout_id = event.payload.payout.entity.id
     event_type = event.event
     return f"{event_type}:{payout_id}"
+
+
+def validate_webhook_payload(payload: str) -> bytes:
+    """Validate and sanitize webhook payload before processing.
+    
+    Implements fail-fast input validation per API security best practices.
+    
+    Args:
+        payload: Raw webhook payload string.
+        
+    Returns:
+        Validated payload as bytes.
+        
+    Raises:
+        WebhookValidationError: If payload fails validation.
+    """
+    # Check for empty payload
+    if not payload:
+        raise WebhookValidationError(
+            "Empty webhook payload",
+            code="EMPTY_PAYLOAD"
+        )
+    
+    # Encode to bytes for size check
+    payload_bytes = payload.encode("utf-8")
+    
+    # Check payload size (DoS protection)
+    if len(payload_bytes) > MAX_PAYLOAD_SIZE:
+        raise WebhookValidationError(
+            f"Webhook payload exceeds maximum size of {MAX_PAYLOAD_SIZE} bytes",
+            code="PAYLOAD_TOO_LARGE"
+        )
+    
+    # Check for obviously malformed data (potential injection)
+    if len(payload_bytes) < 10:  # Minimum reasonable size
+        raise WebhookValidationError(
+            "Webhook payload too short to be valid",
+            code="PAYLOAD_TOO_SHORT"
+        )
+    
+    return payload_bytes

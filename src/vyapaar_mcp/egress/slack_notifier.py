@@ -18,21 +18,81 @@ Architecture:
 Environment Variables:
   SLACK_BOT_TOKEN  — xoxb- bot token with chat:write scope
   SLACK_CHANNEL_ID — Channel ID for approval messages
+  SLACK_SIGNING_SECRET — For verifying interactive callback signatures
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import time
 from typing import Any
 
 import httpx
 
 from vyapaar_mcp.models import Decision, GovernanceResult, ReasonCode
 from vyapaar_mcp.observability import metrics
+from vyapaar_mcp.security import mask_secrets
 
 logger = logging.getLogger(__name__)
 
 SLACK_API_BASE = "https://slack.com/api"
+
+# Slack signature verification
+SLACK_SIGNATURE_VERSION = "v0"
+
+
+def verify_slack_signature(
+    payload: str,
+    timestamp: str,
+    signature: str,
+    signing_secret: str,
+) -> bool:
+    """Verify Slack request signature to prevent callback spoofing.
+    
+    Per Slack security best practices:
+    https://api.slack.com/authentication/verifying-requests-from-slack
+    
+    Args:
+        payload: Raw request body
+        timestamp: X-Slack-Request-Timestamp header
+        signature: X-Slack-Signature header
+        signing_secret: Slack app signing secret
+        
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    # Reject requests older than 5 minutes (replay attack protection)
+    try:
+        request_time = int(timestamp)
+        current_time = int(time.time())
+        if abs(current_time - request_time) > 300:
+            logger.warning("Slack signature verification failed: request too old")
+            return False
+    except ValueError:
+        logger.warning("Slack signature verification failed: invalid timestamp")
+        return False
+    
+    # Build the base string
+    base_string = f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{payload}"
+    
+    # Compute signature
+    expected_signature = hmac.new(
+        key=signing_secret.encode("utf-8"),
+        msg=base_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    
+    # Compare signatures (timing-safe)
+    is_valid = hmac.compare_digest(f"{SLACK_SIGNATURE_VERSION}={expected_signature}", signature)
+    
+    if not is_valid:
+        logger.warning("Slack signature verification FAILED")
+    else:
+        logger.debug("Slack signature verified OK")
+    
+    return is_valid
 
 
 class SlackNotifier:

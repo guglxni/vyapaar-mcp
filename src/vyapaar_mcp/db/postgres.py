@@ -22,7 +22,7 @@ class PostgresClient:
         self._pool: asyncpg.Pool | None = None  # type: ignore[type-arg]
 
     async def connect(self) -> None:
-        """Create connection pool."""
+        """Create connection pool with timeouts."""
         self._pool = await asyncpg.create_pool(
             self._dsn,
             min_size=2,
@@ -96,6 +96,10 @@ class PostgresClient:
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_audit_created
                 ON audit_logs(created_at);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_payout
+                ON audit_logs(payout_id);
             """)
             logger.info("Database migrations completed")
 

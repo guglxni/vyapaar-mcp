@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import pytest
 
+from vyapaar_mcp.config import VyapaarConfig
 from vyapaar_mcp.ingress.razorpay_bridge import RazorpayBridge, DEFAULT_BINARY_PATH
 
 # Skip all tests if Go binary not built
@@ -70,10 +71,8 @@ class TestBridgeInit:
 
 
 @pytest.fixture
-def bridge() -> RazorpayBridge:
-    """Create a bridge with credentials from .env."""
-    from vyapaar_mcp.config import load_config
-    config = load_config()
+def bridge(config: VyapaarConfig) -> RazorpayBridge:
+    """Create a bridge with test credentials."""
     return RazorpayBridge(
         key_id=config.razorpay_key_id,
         key_secret=config.razorpay_key_secret,
@@ -81,10 +80,9 @@ def bridge() -> RazorpayBridge:
 
 
 @pytest.fixture
-def account_number() -> str:
+def account_number(config: VyapaarConfig) -> str:
     """Get account number from config."""
-    from vyapaar_mcp.config import load_config
-    return load_config().razorpay_account_number
+    return config.razorpay_account_number
 
 
 class TestBridgeConnectivity:

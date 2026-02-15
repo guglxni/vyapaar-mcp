@@ -136,7 +136,7 @@ class GLEIFChecker:
         cache_key = f"gleif:name:{name.lower()}"
 
         # --- Check Redis cache ---
-        if self._redis:
+        if self._redis and self._redis._client:
             try:
                 cached = await self._redis._client.get(cache_key)
                 if cached:
@@ -153,7 +153,7 @@ class GLEIFChecker:
                 response = await self._api_search(name)
 
             # Cache the result
-            if self._redis:
+            if self._redis and self._redis._client:
                 try:
                     await self._redis._client.set(cache_key, json.dumps(response.to_dict()), ex=_CACHE_TTL)
                 except Exception as e:
@@ -192,7 +192,7 @@ class GLEIFChecker:
         cache_key = f"gleif:lei:{lei.upper()}"
 
         # --- Check Redis cache ---
-        if self._redis:
+        if self._redis and self._redis._client:
             try:
                 cached = await self._redis._client.get(cache_key)
                 if cached:
@@ -208,7 +208,7 @@ class GLEIFChecker:
             else:
                 response = await self._api_lookup_lei(lei)
 
-            if self._redis:
+            if self._redis and self._redis._client:
                 try:
                     await self._redis._client.set(cache_key, json.dumps(response.to_dict()), ex=_CACHE_TTL)
                 except Exception as e:

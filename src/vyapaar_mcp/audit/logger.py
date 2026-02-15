@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from vyapaar_mcp.models import GovernanceResult
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_DIR = Path("./audit_logs")
+# Make fallback path configurable via environment variable
+FALLBACK_DIR = Path(os.environ.get("VYAPAAR_AUDIT_FALLBACK_DIR", "./audit_logs"))
 
 
 async def log_decision(

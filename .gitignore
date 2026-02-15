@@ -64,3 +64,6 @@ repomix-output.xml
 # ============================================================
 audit_logs/
 *.db
+*.log
+out.txt
+vyapaar-dashboard/
